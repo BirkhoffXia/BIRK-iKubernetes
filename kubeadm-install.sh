@@ -214,3 +214,144 @@ k8s-sheca-node2    Ready    <none>          55m   v1.28.2   192.168.40.152   <no
 
 #进度条一直卡着 由于配置错误勒
 重启-e-添加 rw inti=/sysroot/bin/sh - ctrl+x - chroot /sysroot - vi /etc/sysconfig/selinux 
+
+==============================================================================================
+【metrice-server】
+wget https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.7.0/components.yaml
+vim components.yaml
+	1.registry.k8s.io/metrics-server/metrics-server:v0.7.0 ¸ÄÎª registry.lank8s.cn/metrics-server/metrics-server:v0.7.0
+  2.      - --kubelet-preferred-address-types=InternalIP
+  3.      - --kubelet-insecure-tls	 
+kubectl  apply  -f components.yaml
+==============================================================================================
+【MetaILB】
+kubectl get cm -n kube-system
+kubectl edit cm kube-proxy -n kube-system 
+	strictARP: true
+wget https://raw.githubusercontent.com/metallb/metallb/v0.14.4/config/manifests/metallb-native.yaml
+kubectl apply -f metallb-native.yaml 
+kubectl get ns
+kubectl get pods -n metallb-system
+kubectl get pods speaker-8k9gk -o jsonpath={.status.hostIP} -n metallb-system
+kubectl get pods speaker-pv2dk -o jsonpath={.status.hostIP} -n metallb-system
+kubectl get pods speaker-w49ww -o jsonpath={.status.hostIP} -n metallb-system
+kubectl api-versions
+vim metallb-ipaddresspool.yaml
+apiVersion: metallb.io/v1beta1
+kind: IPAddressPool
+metadata:
+  name: localip-pool
+  namespace: metallb-system
+spec:
+  addresses:
+  - 192.168.40.51-192.168.40.80
+  autoAssign: true
+  avoidBuggyIPs: true
+kubectl apply -f metallb-ipaddresspool.yaml
+kubectl get ipaddresspool -n metallb-system
+vim metallb-l2advertisement.yaml
+apiVersion: metallb.io/v1beta1
+kind: L2Advertisement
+metadata:
+  name: localip-pool-l2a
+  namespace: metallb-system
+spec:
+  ipAddressPools:
+  - localip-pool
+  interfaces:
+  - ens33
+kubectl apply -f metallb-l2advertisement.yaml
+kubectl get l2advertisement -n metallb-system
+==============================================================================================
+【csi-driver-nfs】
+yum install -y nfs-utils
+systemctl start nfs-server
+systemctl status nfs-server
+mkdir /data/nfs -p
+vim /etc/exports
+	/data/nfs 192.168.40.0/24(rw,fsid=0,async,no_subtree_check,no_auth_nlm,insecure,no_root_squash)
+exportfs -arv
+
+git clone https://github.com/kubernetes-csi/csi-driver-nfs.git
+grep image: csi-driver-nfs/deploy/v4.6.0/*
+vi csi-nfs-controller.yaml 
+	%s/registry.k8s.cn/registry.lank8s.cn/g
+vi csi-nfs-node.yaml 
+	%s/registry.k8s.cn/registry.lank8s.cn/g
+vi csi-snapshot-controller.yaml
+	%s/registry.k8s.cn/registry.lank8s.cn/g
+cd csi-driver-nfs/deploy/v4.6.0/
+kubectl apply -f ./
+kubectl get crds | grep storage.k8s.io
+
+yum install -y yum install nfs-utils  :3Ì¨
+vim csi-storageclass.yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: nfs-csi
+provisioner: nfs.csi.k8s.io
+parameters:
+  server: 192.168.40.104
+  share: /data/nfs
+reclaimPolicy: Delete
+volumeBindingMode: Immediate
+kubectl apply -f csi-storageclass.yaml
+kubectl get sc
+
+vim nfs-pvc-demo.yaml
+kind: PersistentVolumeClaim
+apiVersion: v1
+metadata:
+  name: nfs-pvc
+  annotations:
+    velero.io/csi-volumesnapshot-class: "nfs-csi"
+spec:
+  storageClassName: nfs-csi
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi
+
+kubectl apply -f nfs-pvc-demo.yaml
+kubectl get pvc
+
+vim redis-with-nfs-pvc.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: redis-with-nfs-pvc
+spec:
+  containers:
+  - name: redis
+    image: redis:7-alpine
+    ports:
+    - containerPort: 6379
+      name: redis
+    volumeMounts:
+    - mountPath: /data
+      name: data-storage
+  volumes:
+  - name: data-storage
+    persistentVolumeClaim:
+      claimName: nfs-pvc
+
+kubectl apply -f redis-with-nfs-pvc.yaml
+kubectl get pods
+kubectl exec -it redis-with-nfs-pvc -- /bin/sh
+/data # redis-cli
+127.0.0.1:6379> set mykey "BIRKHOFF 2024-04-18"
+127.0.0.1:6379> BGSAVE
+127.0.0.1:6379> get mykey
+"BIRKHOFF 2024-04-18"
+==============================================================================================
+
+【Ingress】
+wget https://github.com/kubernetes/ingress-nginx/blob/controller-v1.9.5/deploy/static/provider/cloud/deploy.yaml
+vim deploy.yaml
+	registry.k8s.io 改为 registry.lank8s.cn 2处
+kubectl apply -f deploy.yaml
+kubectl get ingressclass
+kubectl get pods -n ingress-nginx
+kubectl get svc -n ingress-nginx 
